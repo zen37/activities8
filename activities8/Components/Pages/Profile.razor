@@ -1,0 +1,242 @@
+﻿@page "/Profile/{userId}"
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Identity
+
+@using activities8.Models
+@using activities8.Components.User
+@using activities8.Utils
+
+@inject IProfile _profile
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject UserManager<ApplicationUser> _userManager;
+
+
+<div class="container-fluid">
+    <div class="row mt-2">
+        <AuthorizeView>
+            <Authorized>
+                @if (string.IsNullOrEmpty(loggedUserId))
+                {
+                    <div class="col-12">
+                        <div class="d-flex align-items-center justify-content-center py-8">
+                            <p>Loading ...</p>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    @* Rest of your code goes here... *@
+                    <div class="col-12">
+                        <div class="d-flex align-items-center justify-content-center py-8">
+                            <InputSelect @bind-Value="@selectedCountry" class="form-control">
+                                @foreach (var country in countries)
+                                {
+                                    <option value="@country.Key">@country.Value</option>
+                                }
+                            </InputSelect>
+                        </div>
+                    </div>
+                }
+            </Authorized>
+            <NotAuthorized>
+                <div class="col-12">
+                    <div class="d-flex align-items-center justify-content-center py-8">
+                        <p class="text-center text-danger">please log in so you can display all user details.</p>
+                    </div>
+                </div>
+            </NotAuthorized>
+        </AuthorizeView>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string? userId { get; set; }
+
+    private string selectedCountry;
+
+    public string loggedUserId = string.Empty;
+    public bool loggedUserIsAdmin = false;
+
+    public bool isAdminChecked = false;
+
+    public bool loadingSubmit = false;
+
+    public UserProfile? LoggedProfile;
+
+    public UserProfile? DisplayedProfile;
+
+    public string EditMessageSuccess = string.Empty;
+    public string EditMessageError = string.Empty;
+
+    public string? Base64Photo;
+    public string? SearchedUserEmail;
+
+    private Dictionary<string, string> countries = new Dictionary<string, string>();
+    private Dictionary<string, string> languages = new Dictionary<string, string>();
+    private Dictionary<int, string> activities = new Dictionary<int, string>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+
+    }
+    private async Task Load()
+    {
+        //  countries = CountriesLocalizer.GetAllStrings().ToDictionary(s => s.Name, s => s.Value);
+
+        //   languages = LanguagesLocalizer.GetAllStrings().ToDictionary(s => s.Name, s => s.Value);
+        // activities = ActivitiesService.GetAll().ToDictionary(s => s.Id, s => s.Name);
+
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userIdClaim = authState?.User?.Claims.Where(c => c.Type == ClaimTypes.NameIdentifier).FirstOrDefault();
+        var userRole = authState?.User?.Claims.Where(c => c.Type == ClaimTypes.Role).FirstOrDefault();
+
+        if (userIdClaim == null)
+        {
+            loggedUserId = "NotIdentified";
+        }
+        else
+        {
+            loggedUserId = userIdClaim.Value;
+            LoggedProfile = await _profile.GetProfileById(loggedUserId);
+            if (userRole != null && userRole.Value.Contains("Admin"))
+            {
+                loggedUserIsAdmin = true;
+            }
+            if (LoggedProfile != null)
+            {
+                if (LoggedProfile.Approval == true || loggedUserIsAdmin)
+                {   
+                    if (!string.IsNullOrWhiteSpace(userId)) {
+                        var user = await _userManager.FindByIdAsync(userId);
+                        if (user != null) {
+                            DisplayedProfile = await _profile.GetProfileById(userId);
+                            if (DisplayedProfile != null)
+                            {
+                                SearchedUserEmail = user.UserName;
+                                isAdminChecked = await _userManager.IsInRoleAsync(user, "Admin");
+                                await LoadPhoto(DisplayedProfile.UserId);
+                            }
+                        }
+                    }
+                }
+
+            }
+        }
+
+    }
+
+    private async Task LoadPhoto(string userId)
+    {
+        Base64Photo = await _profile.GetPhoto(userId);
+    }
+    private async Task SubmitEdit()
+    {
+        try
+        {
+            loadingSubmit = true;
+
+            if (string.IsNullOrWhiteSpace(userId) || DisplayedProfile == null)
+            {
+                return;
+            }
+
+            await _profile.Edit(DisplayedProfile.UserId, DisplayedProfile);
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null)
+            {
+                return;
+            }
+
+            bool isAdminOld = await _userManager.IsInRoleAsync(user, "Admin");
+            if (!isAdminChecked && isAdminOld)
+            {
+                // Remove the role admin
+                await _userManager.RemoveFromRoleAsync(user, "Admin");
+            }
+            else if (isAdminChecked && !isAdminOld)
+            {
+                // Add the role admin
+                await _userManager.AddToRoleAsync(user, "Admin");
+            }
+
+            EditMessageSuccess = "User has been updated successfully";
+
+        }
+        catch
+        {
+            EditMessageError = "Error has occured while updating the user, try later";
+        }
+
+        loadingSubmit = false;
+
+        StateHasChanged();
+    }
+    private void CheckedAdmin()
+    {
+        isAdminChecked = !isAdminChecked;
+    }
+    private async Task LoadFile(InputFileChangeEventArgs e)
+    {
+        loadingSubmit = true;
+        var file = e.File;
+        try
+        {
+            using (var ms = new MemoryStream())
+            {
+                await file.OpenReadStream(10000000).CopyToAsync(ms);
+                Base64Photo = "data:image/png;base64, " + await GenerateThumbnail.GetReducedImageBase64(new FormFile(ms, 0, ms.Length, "photo", "photo"));
+
+                if (DisplayedProfile != null)
+                {
+                    DisplayedProfile.Base64Photo = Base64Photo;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            EditMessageError = $"Failed to load image: {ex.Message}";
+        }
+
+        loadingSubmit = false;
+
+    }
+    private string MapCountry(int id)
+    {
+        try
+        {
+            return countries[id.ToString()];
+        }
+        catch
+        {
+            return "NotFound_" + id;
+        }
+    }
+    private string MapLanguage(int id)
+    {
+        try
+        {
+            return languages[id.ToString()];
+        }
+        catch
+        {
+            return "NotFound_" + id;
+        }
+    }
+    private string MapActivity(int id)
+    {
+        try
+        {
+            return String.Empty;
+            // return ActivitiesService.GetById(id).Name;
+        }
+        catch
+        {
+            return "NotFound_" + id;
+        }
+    }
+}

@@ -1,0 +1,303 @@
+﻿@page "/ManageProfile"
+
+@using System.Security.Claims
+@using System.Reflection;
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+
+@using activities8.Models
+@using activities8.Components.User
+@using activities8.Utils
+
+@inject IProfile _profile
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject UserManager<ApplicationUser> _userManager
+
+
+<div class="container">
+    <div class="row mt-2">
+        <AuthorizeView>
+            <Authorized>
+                <div class="row mt-2">
+                    @if (SearchedProfile != null)
+                    {
+                        <div class="col-md-8">
+                            <form @onsubmit="SubmitEdit">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h5 class="card-title"><b> Manage profile </b></h5>
+
+                                        <div class="form-group">
+                                            <label for="Name">Name</label>
+                                            <input type="text" class="form-control" id="Name" @bind="SearchedProfile.Name" />
+                                        </div>
+
+                                        <select @bind="selectedCountryId">
+                                            <option value="">Select a country</option>
+                                            @foreach (var country in countries)
+                                            {
+                                                <option value="@country.Id">@country.Name</option>
+                                            }
+                                        </select>
+
+                                        <button type="submit" class="btn btn-primary">Save</button>
+
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card">
+                                <div class="card-body">
+                                    @if (string.IsNullOrEmpty(Base64Photo))
+                                    {
+                                        <p>Loading user photo ...</p>
+                                    }
+                                    else
+                                    {
+                                        @if (Base64Photo == "NULL")
+                                        {
+                                            <img class="img-fluid" src="/images/DefaultUser.png" alt="Default User Image" />
+                                        }
+                                        else
+                                        {
+                                            <img class="img-fluid" src="@Base64Photo" alt="User Photo" />
+                                        }
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <p>Loading...</p>
+                    }
+                </div>
+            </Authorized>
+            <NotAuthorized>
+                <div class="col-md-12">
+                    <div class="alert alert-danger text-center" role="alert">Please log in to display all user details.</div>
+                </div>
+            </NotAuthorized>
+        </AuthorizeView>
+    </div>
+</div>
+
+
+
+
+@code {
+
+    public string currentUserId;
+    public bool currentUserIsAdmin = false;
+
+    public bool isAdminChecked = false;
+
+    public bool loadingSubmit = false;
+
+    public UserProfile OriginalSearchedProfile;
+    public UserProfile SearchedProfile;
+
+    public string EditMessageSuccess;
+    public string EditMessageError;
+
+    public string Base64Photo;
+    public string SearchedUserEmail;
+
+    private int selectedCountryId;
+
+    private List<(int, string)> countries = new List<(int, string)>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+
+    }
+    private async Task Load()
+    {
+        //   countries = CountriesLocalizer.GetAllStrings().ToDictionary(s => s.Name, s => s.Value);
+
+        countries = Country.GetCountriesByOrder();
+
+        //   languages = LanguagesLocalizer.GetAllStrings().ToDictionary(s => s.Name, s => s.Value);
+        //   activities8 = ActivitiesService.GetAll().ToDictionary(s => s.Id, s => s.Name);
+
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userIdClaim = authState?.User?.Claims.Where(c => c.Type == ClaimTypes.NameIdentifier).FirstOrDefault();
+        var userRole = authState?.User?.Claims.Where(c => c.Type == ClaimTypes.Role).FirstOrDefault();
+
+        if (userIdClaim == null)
+        {
+            currentUserId = "NotIdentified";
+        }
+        else
+        {
+            if (userRole != null && userRole.Value.Contains("Admin"))
+            {
+                currentUserIsAdmin = true;
+            }
+            currentUserId = userIdClaim.Value;
+            SearchedProfile = await _profile.GetProfileById(currentUserId);
+            if (SearchedProfile != null)
+            { 
+                // SelectedCountry = SearchedProfile.IdCountry == 0 ? null : new Country { Id = SearchedProfile.IdCountry, Name = countries[SearchedProfile.IdCountry.ToString()] };
+                //  SelectedActivity = SearchedProfile.IdActivity == 0 ? null : new Activity { Id = SearchedProfile.IdActivity, Name = activities8[SearchedProfile.IdActivity] };
+                //  SelectedLanguage = SearchedProfile.IdLanguage == 0 ? null : new Language { Id = SearchedProfile.IdLanguage, Name = languages[SearchedProfile.IdLanguage.ToString()] };
+                Base64Photo = await _profile.GetPhoto(SearchedProfile.UserId);
+            }
+
+        }
+
+    }
+
+    private bool isOnlyAvailabilityChanged(UserProfile oldProfile, UserProfile userProfile)
+    {
+        Type type = oldProfile.GetType();
+        PropertyInfo[] properties = type.GetProperties();
+
+        foreach (PropertyInfo property in properties)
+        {
+            object value1 = property.GetValue(oldProfile);
+            object value2 = property.GetValue(userProfile);
+            if (!Equals(value1, value2) && property.Name != "Available")
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private async Task SubmitEdit()
+    {
+        try
+        {
+            loadingSubmit = true;
+            var originalState = await _profile.GetProfile(currentUserId);
+            if (!isOnlyAvailabilityChanged(originalState, SearchedProfile))
+            {
+                SearchedProfile.Approval = false;
+            }
+
+            await _profile.Edit(SearchedProfile.UserId, SearchedProfile);
+            EditMessageSuccess = "Profile has been updated successfully";
+        }
+        catch (Exception ex)
+        {
+            EditMessageError = "Error has occured while updating the user, try later";
+        }
+        loadingSubmit = false;
+        StateHasChanged();
+    }
+
+    private async Task LoadFile(InputFileChangeEventArgs e)
+    {
+        loadingSubmit = true;
+        var file = e.File;
+        try
+        {
+            using (var ms = new MemoryStream())
+            {
+                await file.OpenReadStream(10000000).CopyToAsync(ms);
+                Base64Photo = "data:image/png;base64, " + await GenerateThumbnail.GetReducedImageBase64(new FormFile(ms, 0, ms.Length, "photo", "photo"));
+                SearchedProfile.Base64Photo = Base64Photo;
+            }
+        }
+        catch (Exception ex)
+        {
+            EditMessageError = "Fail to load image";
+        }
+        loadingSubmit = false;
+
+    }
+
+
+    //private Language SelectedLanguage;
+    //private Activity SelectedActivity;
+
+
+    private async Task<IEnumerable<Country>> SearchCountry(string value)
+    {
+        return countries.AsParallel().Where(x => (string.IsNullOrEmpty(value) ? true : x.Value.Contains(value, StringComparison.InvariantCultureIgnoreCase))).Select(s => new Country
+            {
+                Id = Convert.ToInt32(s.Key),
+                Name = s.Value
+            }).OrderBy(x => x.Name);
+    }
+    private async Task<IEnumerable<Language>> SearchLanguage(string value)
+    {
+        return languages.AsParallel().Where(x => (string.IsNullOrEmpty(value) ? true : x.Value.Contains(value, StringComparison.InvariantCultureIgnoreCase))).Select(s => new Language
+            {
+                Id = Convert.ToInt32(s.Key),
+                Name = s.Value
+            }).OrderBy(x => x.Name);
+    }
+    private async Task<IEnumerable<Activity>> SearchActivity(string value)
+    {
+        return activities8.AsParallel().Where(x => (string.IsNullOrEmpty(value) ? true : x.Value.Contains(value, StringComparison.InvariantCultureIgnoreCase))).Select(s => new Activity
+            {
+                Id = Convert.ToInt32(s.Key),
+                Name = s.Value
+            }).OrderBy(x => x.Name);
+    }
+
+    private async Task CountryChanged(Country country)
+    {
+        if (country != null)
+        {
+            SelectedCountry = country;
+            SearchedProfile.IdCountry = country.Id;
+        }
+
+
+    }
+    private async Task LanguageChanged(Language language)
+    {
+        if (language != null)
+        {
+            SelectedLanguage = language;
+            SearchedProfile.IdLanguage = language.Id;
+        }
+    }
+    private async Task ActivityChanged(Activity activity)
+    {
+        if (activity != null)
+        {
+            SelectedActivity = activity;
+            SearchedProfile.IdActivity = activity.Id;
+        }
+    }
+    private string MapCountry(int id)
+    {
+        try
+        {
+            return countries[id.ToString()];
+        }
+        catch
+        {
+            return "NotFound_" + id;
+        }
+    }
+    private string MapLanguage(int id)
+    {
+        try
+        {
+            return languages[id.ToString()];
+        }
+        catch
+        {
+            return "NotFound_" + id;
+        }
+    }
+    private string MapActivity(int id)
+    {
+        try
+        {
+            return ActivitiesService.GetById(id).Name;
+        }
+        catch
+        {
+            return "NotFound_" + id;
+        }
+    }
+}

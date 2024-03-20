@@ -1,0 +1,27 @@
+﻿using Humanizer.Localisation;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Localization;
+using System.Net.NetworkInformation;
+
+@page "/Profile/{userId}"
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims;
+@using Microsoft.AspNetCore.Identity;
+@*@using activities8.Extensions; *@
+@using activities8.Models;
+@using activities8.Components.User;
+@inject IProfile _profile;
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@*@using activities8.Repository.Activities; *@
+@*@inject IActivitiesRepository ActivitiesService; *@
+@inject IHttpContextAccessor HttpContextAccessor;
+
+  @using Microsoft.Extensions.Localization;
+@using activities8.Resources;
+@inject IStringLocalizer<Countries>
+    CountriesLocalizer
+    @inject IStringLocalizer<Languages>
+        LanguagesLocalizer
+
+        @inject UserManager<IdentityUser> _userManager;
+
